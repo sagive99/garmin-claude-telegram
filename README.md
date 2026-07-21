@@ -4,8 +4,8 @@ A self-hosted AI training coach on Telegram, backed by your Garmin data.
 Every morning it pulls yesterday's Garmin Connect data, sends it to Gemini,
 and posts a coach-style verdict (go hard / train easy / rest, with the
 evidence) to your Telegram chat. You can also **message the bot any time** and
-it answers from your data and history. Runs on Google Cloud Run — no computer
-needs to be on.
+it answers from your data and history. Runs on AWS Lambda — no computer needs
+to be on.
 
 **Heads up:** this uses the unofficial `garminconnect` Python library, which
 reverse-engineers Garmin's private mobile API. It's not an officially
@@ -15,12 +15,13 @@ personal project, just don't rely on it for anything critical.
 
 ## How it works
 
-One Cloud Run service exposes two routes:
+One Lambda function, two trigger shapes:
 
-- **`/daily-report`** — Cloud Scheduler hits it once a day. Runs the full
-  pipeline: fetch Garmin → analyze → post to Telegram → persist state.
-- **`/telegram-webhook`** — Telegram hits it on each message you send the bot.
-  Answers your question using the same stored context, then persists the turn.
+- **Daily report** — EventBridge Scheduler invokes it once a day with
+  `{"task":"daily-report"}`. Runs the full pipeline: fetch Garmin → analyze →
+  post to Telegram → persist state.
+- **Chat** — a Lambda Function URL delivers Telegram webhook POSTs. Each
+  message is answered from the same stored context, then the turn is persisted.
 
 The pieces:
 
@@ -50,10 +51,12 @@ The pieces:
    history and treat the computed activity stats as ground truth.
 6. `src/chat.py` is the inbound-message handler; `src/telegram_notify.py`
    posts messages to Telegram.
-7. `src/storage.py` reads/writes the JSON state in a **GCS bucket** on Cloud
-   Run (`GCS_BUCKET` env var), or the local `data/` dir when that's unset —
-   so local testing needs no cloud setup.
-8. `src/app.py` is the Cloud Run entrypoint (Flask) wiring the two routes.
+7. `src/storage.py` reads/writes the JSON state in an **S3 bucket** on Lambda
+   (`S3_BUCKET` env var), or the local `data/` dir when that's unset — so
+   local testing needs no cloud setup.
+8. `src/lambda_handler.py` is the Lambda entrypoint: it routes the scheduled
+   event to the daily pipeline and Function URL requests to the chat/webhook
+   logic. No web framework — the events are plain dicts.
 
 ### Scope / what it doesn't do
 - **Chat answers from stored data**, not a live Garmin pull per message — the
@@ -84,14 +87,15 @@ The pieces:
 Edit `data/athlete_profile.json` with your goals, training split, injuries,
 motivation — whatever context you'd tell a real coach. It shapes the advice.
 
-### 4. Deploy to Cloud Run
-Follow [`deploy.md`](deploy.md): create the GCS state bucket, deploy the
-service, register the Telegram webhook, and create the Cloud Scheduler job.
-Needs a GCP project with billing enabled (free tier covers personal usage).
+### 4. Deploy to AWS Lambda
+Follow [`deploy_aws.md`](deploy_aws.md): all copy-paste, runnable entirely in
+**AWS CloudShell** (browser — no local install, no Docker). It creates the S3
+state bucket, builds the zip, creates the Lambda + Function URL, registers the
+Telegram webhook, and creates the EventBridge Scheduler job.
 
 ## Local testing
 
-State falls back to the local `data/` dir when `GCS_BUCKET` is unset.
+State falls back to the local `data/` dir when `S3_BUCKET` is unset.
 
 ```bash
 pip install -r requirements.txt
@@ -103,11 +107,8 @@ cd src
 # Run the daily pipeline once (fetch + analyze + send + persist):
 python main.py
 
-# Or run the web service and exercise the routes:
-python app.py
-# then, in another shell:
-curl -X POST localhost:8080/telegram-webhook -H 'Content-Type: application/json' \
-  -d '{"message":{"text":"how did I sleep this week?","chat":{"id":'"$TELEGRAM_CHAT_ID"'}}}'
+# Exercise the chat handler with a fake Function URL event:
+python -c 'import json,os,lambda_handler as h; print(h.handler({"rawPath":"/telegram-webhook","requestContext":{"http":{"path":"/telegram-webhook"}},"headers":{},"body":json.dumps({"message":{"text":"how did I sleep this week?","chat":{"id":int(os.environ["TELEGRAM_CHAT_ID"])}}})}, None))'
 ```
 
 ## Notes / things you might want to change

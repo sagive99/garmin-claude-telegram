@@ -4,3 +4,7 @@ __pycache__/
 .venv*/
 .claude/
 env.yaml
+env.json
+build/
+function.zip
+out.json
