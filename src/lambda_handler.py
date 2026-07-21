@@ -14,6 +14,7 @@ import os
 
 import chat
 import main as daily
+from telegram_notify import send_message
 
 ALLOWED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
@@ -27,8 +28,14 @@ def _resp(status: int):
 def handler(event, context):
     # Scheduled daily run — invoked directly by EventBridge Scheduler.
     if event.get("task") == "daily-report":
-        daily.main()
-        return {"ok": True}
+        # Never raise: a raised error makes Scheduler retry up to 185x/24h,
+        # and each retry burns another Gemini request (20/day free-tier cap).
+        try:
+            daily.main()
+            return {"ok": True}
+        except Exception as e:
+            print(f"daily failed: {e}")
+            return {"ok": False, "error": str(e)}
 
     # Otherwise it's a Function URL HTTP event.
     rc = event.get("requestContext") or {}
@@ -48,9 +55,19 @@ def handler(event, context):
         text = message.get("text")
         chat_id = str((message.get("chat") or {}).get("id", ""))
 
-        # 200 for anything we won't act on so Telegram doesn't retry.
+        # Always return 200 so Telegram never retries. A raised error here =
+        # ~12 webhook retries = ~12 wasted Gemini requests against the 20/day
+        # free-tier cap. On failure, tell the user once with a plain message
+        # (send_message uses the Telegram API, not Gemini, so it's free).
         if text and (not ALLOWED_CHAT_ID or chat_id == str(ALLOWED_CHAT_ID)):
-            chat.handle_message(text)
+            try:
+                chat.handle_message(text)
+            except Exception as e:
+                print(f"chat failed: {e}")
+                try:
+                    send_message("⚠️ Coach is out of AI quota for now — try again later.")
+                except Exception:
+                    pass
         return _resp(200)
 
     if path.endswith("/daily-report"):
