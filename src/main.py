@@ -1,6 +1,6 @@
 import sys
 
-from claude_analyze import analyze_day
+from gemini_analyze import analyze_day
 from garmin_client import fetch_daily_summary
 from history import load_history, save_history
 from telegram_notify import send_message
@@ -13,7 +13,7 @@ def main() -> None:
     print("Loading conversation history...")
     history = load_history()
 
-    print("Asking Claude for analysis...")
+    print("Asking Gemini for analysis...")
     reply_text, updated_history = analyze_day(daily_data, history)
 
     print("Sending to Telegram...")

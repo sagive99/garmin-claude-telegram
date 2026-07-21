@@ -1,13 +1,13 @@
-"""Sends the day's Garmin data to Claude for analysis, using the running
+"""Sends the day's Garmin data to Gemini for analysis, using the running
 conversation history so it reads as one continuous dedicated thread rather
 than a one-off, context-free call each day.
 """
 import json
-import os
 
-import anthropic
+from google import genai
+from google.genai import types
 
-MODEL = "claude-sonnet-5"
+MODEL = "gemini-2.5-flash"
 
 SYSTEM_PROMPT = (
     "You are a personal training/health analyst reviewing the user's daily "
@@ -21,26 +21,28 @@ SYSTEM_PROMPT = (
 
 
 def analyze_day(daily_data: dict, history: list[dict]) -> tuple[str, list[dict]]:
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
+    client = genai.Client()  # reads GEMINI_API_KEY from env
 
     user_message = {
         "role": "user",
-        "content": (
-            f"Here is my Garmin data for {daily_data.get('date')}:\n\n"
-            f"```json\n{json.dumps(daily_data, indent=2, default=str)}\n```"
-        ),
+        "parts": [{
+            "text": (
+                f"Here is my Garmin data for {daily_data.get('date')}:\n\n"
+                f"```json\n{json.dumps(daily_data, indent=2, default=str)}\n```"
+            )
+        }],
     }
 
-    messages = history + [user_message]
+    contents = history + [user_message]
 
-    response = client.messages.create(
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=1000,
-        system=SYSTEM_PROMPT,
-        messages=messages,
+        contents=contents,
+        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
     )
 
-    reply_text = "".join(block.text for block in response.content if block.type == "text")
+    reply_text = response.text
 
-    updated_history = messages + [{"role": "assistant", "content": reply_text}]
+    # Gemini's chat role is "model", not "assistant".
+    updated_history = contents + [{"role": "model", "parts": [{"text": reply_text}]}]
     return reply_text, updated_history

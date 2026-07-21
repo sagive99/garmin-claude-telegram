@@ -1,4 +1,4 @@
-"""Maintains a rolling conversation history file so each day's Claude call
+"""Maintains a rolling conversation history file so each day's Gemini call
 sees prior context, giving the effect of one ongoing dedicated chat instead
 of a fresh, memoryless call every time.
 """
