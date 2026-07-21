@@ -1,8 +1,11 @@
 # garmin-claude-telegram
 
-Pulls yesterday's Garmin Connect data on a daily schedule, sends it to Gemini
-for analysis, and posts the result to a Telegram chat. Runs entirely on
-GitHub Actions — no computer needs to be on.
+A self-hosted AI training coach on Telegram, backed by your Garmin data.
+Every morning it pulls yesterday's Garmin Connect data, sends it to Gemini,
+and posts a coach-style verdict (go hard / train easy / rest, with the
+evidence) to your Telegram chat. You can also **message the bot any time** and
+it answers from your data and history. Runs on Google Cloud Run — no computer
+needs to be on.
 
 **Heads up:** this uses the unofficial `garminconnect` Python library, which
 reverse-engineers Garmin's private mobile API. It's not an officially
@@ -11,6 +14,15 @@ technically isn't Garmin's sanctioned way of accessing your data. Fine for a
 personal project, just don't rely on it for anything critical.
 
 ## How it works
+
+One Cloud Run service exposes two routes:
+
+- **`/daily-report`** — Cloud Scheduler hits it once a day. Runs the full
+  pipeline: fetch Garmin → analyze → post to Telegram → persist state.
+- **`/telegram-webhook`** — Telegram hits it on each message you send the bot.
+  Answers your question using the same stored context, then persists the turn.
+
+The pieces:
 
 1. `src/garmin_client.py` logs into Garmin Connect and pulls essentially
    everything it exposes for the previous day: stats, sleep, heart rate,
@@ -22,33 +34,37 @@ personal project, just don't rely on it for anything critical.
    need a device you don't have (e.g. lactate threshold) just record an
    error for that field instead of failing the run.
 2. `src/history.py` keeps a rolling conversation log
-   (`data/conversation_history.json`) so Gemini sees prior days' context —
-   it behaves like one ongoing dedicated chat rather than a fresh call
-   every time.
+   (`conversation_history.json`) shared by the daily report *and* chat, so
+   Gemini sees prior context and it all reads as one continuous thread.
 3. `src/daily_log.py` keeps a separate, trimmed rolling log
-   (`data/daily_log.json`, up to 180 days) of just the aggregate fields —
-   no intraday arrays — and computes exact session counts/hours per
-   activity type over the trailing window in Python. This exists because
-   asking an LLM to tally "how many sessions in the last 28 days" from raw
-   JSON is unreliable; the count going into the prompt is always correct.
-4. `src/athlete_profile.py` loads `data/athlete_profile.json` — your
-   self-reported goals, training split, injuries, motivation. Hand-edited,
-   not collected via chat (see limitations below).
-5. `src/gemini_analyze.py` sends the data + history + profile + computed
-   stats to the Gemini API and gets back a coach-style verdict (go hard /
-   train easy / rest, with the evidence) rather than a plain data summary.
-6. `src/telegram_notify.py` posts that report to your Telegram chat.
-7. The GitHub Actions workflow commits the updated history/log files back
-   to the repo after each run so continuity persists.
+   (`daily_log.json`, up to 180 days) of just the aggregate fields — no
+   intraday arrays — and computes exact session counts/hours per activity
+   type over the trailing window in Python. This exists because asking an LLM
+   to tally "how many sessions in the last 28 days" from raw JSON is
+   unreliable; the count going into the prompt is always correct.
+4. `src/athlete_profile.py` loads `athlete_profile.json` — your self-reported
+   goals, training split, injuries, motivation — so advice is tailored, not
+   guessed from data alone.
+5. `src/gemini_analyze.py` — `analyze_day()` produces the daily verdict;
+   `chat_reply()` answers free-form messages. Both thread through the shared
+   history and treat the computed activity stats as ground truth.
+6. `src/chat.py` is the inbound-message handler; `src/telegram_notify.py`
+   posts messages to Telegram.
+7. `src/storage.py` reads/writes the JSON state in a **GCS bucket** on Cloud
+   Run (`GCS_BUCKET` env var), or the local `data/` dir when that's unset —
+   so local testing needs no cloud setup.
+8. `src/app.py` is the Cloud Run entrypoint (Flask) wiring the two routes.
 
-### What this doesn't do (vs. apps like athletedata.health)
-This bot is **push-only**: GitHub Actions cron runs once a day, does its
-job, and exits — there's no live process listening for replies. So it
-can't do onboarding chat, answer follow-up questions, or send proactive
-mid-day check-ins the way a real Telegram bot with a webhook/long-polling
-listener can. That would need different hosting (a small always-on service
-or a serverless webhook), not just a prompt change. `athlete_profile.json`
-is the workaround: fill it in by hand once instead of chatting it in.
+### Scope / what it doesn't do
+- **Chat answers from stored data**, not a live Garmin pull per message — the
+  morning job already logged last night's data, so "how did I sleep" works
+  without a re-login. On-demand live fetch is a deliberate later add (see
+  `src/chat.py`).
+- **Proactive nudges** come from the daily report adapting its verdict. True
+  real-time "you just finished a hard session" pings would need periodic
+  activity polling — not built.
+- **Single user.** The webhook only responds to the chat ID in
+  `TELEGRAM_CHAT_ID` and ignores everything else.
 
 ## Setup
 
@@ -64,33 +80,18 @@ is the workaround: fill it in by hand once instead of chatting it in.
 - Create one at [Google AI Studio](https://aistudio.google.com/apikey) →
   Create API key. Free tier available; check current quotas/pricing there.
 
-### 3. Fork/push this repo to your own GitHub account
-
-### 4. Fill in your athlete profile (optional but recommended)
+### 3. Fill in your athlete profile
 Edit `data/athlete_profile.json` with your goals, training split, injuries,
-motivation — whatever context you'd tell a real coach. Commit it. The
-report uses this to tailor advice instead of guessing from data alone.
+motivation — whatever context you'd tell a real coach. It shapes the advice.
 
-### 5. Add repo secrets
-Go to **Settings → Secrets and variables → Actions** on your repo and add:
-
-| Secret | Value |
-|---|---|
-| `GARMIN_EMAIL` | Your Garmin Connect login email |
-| `GARMIN_PASSWORD` | Your Garmin Connect password |
-| `GEMINI_API_KEY` | From step 2 |
-| `TELEGRAM_BOT_TOKEN` | From step 1 |
-| `TELEGRAM_CHAT_ID` | From step 1 |
-
-### 6. Test it
-Go to the **Actions** tab → **Daily Garmin Report** → **Run workflow** to
-trigger it manually before waiting for the schedule.
-
-### 7. Adjust the schedule
-Edit the `cron` line in `.github/workflows/daily-report.yml`. It's in UTC —
-use [crontab.guru](https://crontab.guru) to convert your local time.
+### 4. Deploy to Cloud Run
+Follow [`deploy.md`](deploy.md): create the GCS state bucket, deploy the
+service, register the Telegram webhook, and create the Cloud Scheduler job.
+Needs a GCP project with billing enabled (free tier covers personal usage).
 
 ## Local testing
+
+State falls back to the local `data/` dir when `GCS_BUCKET` is unset.
 
 ```bash
 pip install -r requirements.txt
@@ -98,16 +99,23 @@ export GARMIN_EMAIL=... GARMIN_PASSWORD=...
 export GEMINI_API_KEY=...
 export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
 cd src
+
+# Run the daily pipeline once (fetch + analyze + send + persist):
 python main.py
+
+# Or run the web service and exercise the routes:
+python app.py
+# then, in another shell:
+curl -X POST localhost:8080/telegram-webhook -H 'Content-Type: application/json' \
+  -d '{"message":{"text":"how did I sleep this week?","chat":{"id":'"$TELEGRAM_CHAT_ID"'}}}'
 ```
 
 ## Notes / things you might want to change
 - `garmin_client.py` pulls a fixed set of endpoints — trim or extend based
   on what you actually want analyzed.
-- `history.py` caps history at 40 messages (~20 exchanges) to avoid
-  unbounded growth; tune `MAX_TURNS` if you want more/less lookback.
+- `history.py` caps history at 40 messages (~20 exchanges); tune `MAX_TURNS`.
 - `daily_log.py` caps the aggregate log at 180 days (`MAX_DAYS`) and the
-  rolling activity stats window at 28 days (`summarize_activities(days=...)`
-  in `main.py`) — tune either if you want a longer/shorter lookback.
-- The system prompt in `gemini_analyze.py` controls tone/format of
-  the report — edit it to match what's actually useful to you.
+  rolling activity stats window at 28 days (`summarize_activities(days=...)`)
+  — tune either for a longer/shorter lookback.
+- The prompts in `gemini_analyze.py` (`SYSTEM_PROMPT` for the daily report,
+  `CHAT_SYSTEM_PROMPT` for chat) control tone/format — edit to taste.

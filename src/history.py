@@ -2,10 +2,9 @@
 sees prior context, giving the effect of one ongoing dedicated chat instead
 of a fresh, memoryless call every time.
 """
-import json
-import os
+import storage
 
-HISTORY_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "conversation_history.json")
+HISTORY_NAME = "conversation_history.json"
 
 # Keep the file bounded — without this it grows forever and eventually
 # blows the model's context window.
@@ -13,14 +12,8 @@ MAX_TURNS = 40  # ~20 exchanges (user+assistant pairs)
 
 
 def load_history() -> list[dict]:
-    if not os.path.exists(HISTORY_PATH):
-        return []
-    with open(HISTORY_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return storage.read_json(HISTORY_NAME, [])
 
 
 def save_history(messages: list[dict]) -> None:
-    trimmed = messages[-MAX_TURNS:]
-    os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
-    with open(HISTORY_PATH, "w", encoding="utf-8") as f:
-        json.dump(trimmed, f, indent=2, ensure_ascii=False)
+    storage.write_json(HISTORY_NAME, messages[-MAX_TURNS:])

@@ -40,15 +40,22 @@ SYSTEM_PROMPT = (
     "and never recompute or guess a different number yourself."
 )
 
+CHAT_SYSTEM_PROMPT = (
+    "You are the user's personal AI coach, replying to a message they sent "
+    "you in Telegram. You have the running history of your past daily reports "
+    "and conversations, their self-reported profile, and computed rolling "
+    "activity stats — use all of it. Answer the actual question directly and "
+    "conversationally; this is a chat reply, not a daily report, so don't "
+    "force the go-hard/easy/rest report structure unless they're asking what "
+    "to do today. Ground answers in their real numbers and history, treat any "
+    "computed activity stats as ground truth (never recompute), and shape "
+    "advice by their goals and injuries. If you genuinely don't have the data "
+    "to answer (e.g. they ask about a metric not in the log), say so plainly. "
+    "Keep it tight for Telegram — no long preambles or disclaimers."
+)
 
-def analyze_day(
-    daily_data: dict,
-    history: list[dict],
-    profile: dict | None = None,
-    activity_stats: dict | None = None,
-) -> tuple[str, list[dict]]:
-    client = genai.Client()  # reads GEMINI_API_KEY from env
 
+def _context_parts(profile: dict | None, activity_stats: dict | None) -> list[str]:
     parts = []
     if profile:
         parts.append(
@@ -60,6 +67,18 @@ def analyze_day(
             "Rolling activity stats (computed, ground truth):\n"
             f"```json\n{json.dumps(activity_stats, indent=2)}\n```"
         )
+    return parts
+
+
+def analyze_day(
+    daily_data: dict,
+    history: list[dict],
+    profile: dict | None = None,
+    activity_stats: dict | None = None,
+) -> tuple[str, list[dict]]:
+    client = genai.Client()  # reads GEMINI_API_KEY from env
+
+    parts = _context_parts(profile, activity_stats)
     parts.append(
         f"Here is my Garmin data for {daily_data.get('date')}:\n\n"
         f"```json\n{json.dumps(daily_data, indent=2, default=str)}\n```"
@@ -79,4 +98,34 @@ def analyze_day(
 
     # Gemini's chat role is "model", not "assistant".
     updated_history = contents + [{"role": "model", "parts": [{"text": reply_text}]}]
+    return reply_text, updated_history
+
+
+def chat_reply(
+    user_text: str,
+    history: list[dict],
+    profile: dict | None = None,
+    activity_stats: dict | None = None,
+) -> tuple[str, list[dict]]:
+    """Free-form reply to a Telegram message. Same history-threading as the
+    daily report, but answers the user's actual question rather than emitting
+    the fixed daily structure. Profile + computed stats are sent as context
+    every turn (so they can't age out of the history window) but only the raw
+    user text is persisted, so the stored history doesn't balloon."""
+    client = genai.Client()
+
+    sent_parts = _context_parts(profile, activity_stats) + [user_text]
+    sent_message = {"role": "user", "parts": [{"text": "\n\n".join(sent_parts)}]}
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=history + [sent_message],
+        config=types.GenerateContentConfig(system_instruction=CHAT_SYSTEM_PROMPT),
+    )
+
+    reply_text = response.text
+    updated_history = history + [
+        {"role": "user", "parts": [{"text": user_text}]},
+        {"role": "model", "parts": [{"text": reply_text}]},
+    ]
     return reply_text, updated_history

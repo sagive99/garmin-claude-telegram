@@ -8,10 +8,10 @@ like raw heart rate or step-by-step traces) so the log stays small even at a
 year of history.
 """
 import datetime
-import json
-import os
 
-LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "daily_log.json")
+import storage
+
+LOG_NAME = "daily_log.json"
 MAX_DAYS = 180
 
 # Fields worth keeping for trend analysis. Everything else in daily_data
@@ -32,10 +32,7 @@ def trim_for_log(daily_data: dict) -> dict:
 
 
 def load_log() -> list[dict]:
-    if not os.path.exists(LOG_PATH):
-        return []
-    with open(LOG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return storage.read_json(LOG_NAME, [])
 
 
 def append_day(log: list[dict], trimmed_day: dict) -> list[dict]:
@@ -46,9 +43,7 @@ def append_day(log: list[dict], trimmed_day: dict) -> list[dict]:
 
 
 def save_log(log: list[dict]) -> None:
-    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-    with open(LOG_PATH, "w", encoding="utf-8") as f:
-        json.dump(log, f, indent=2, ensure_ascii=False, default=str)
+    storage.write_json(LOG_NAME, log)
 
 
 def summarize_activities(log: list[dict], days: int = 28) -> dict:
