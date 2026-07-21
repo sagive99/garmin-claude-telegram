@@ -25,13 +25,30 @@ personal project, just don't rely on it for anything critical.
    (`data/conversation_history.json`) so Gemini sees prior days' context —
    it behaves like one ongoing dedicated chat rather than a fresh call
    every time.
-3. `src/gemini_analyze.py` sends the data + history to the Gemini API and
-   gets back a coach-style verdict (go hard / train easy / rest, with the
-   evidence) rather than a plain data summary — similar in spirit to what
-   apps like athletedata.health do, just self-hosted and Garmin-only.
-4. `src/telegram_notify.py` posts that report to your Telegram chat.
-5. The GitHub Actions workflow commits the updated history file back to the
-   repo after each run so continuity persists.
+3. `src/daily_log.py` keeps a separate, trimmed rolling log
+   (`data/daily_log.json`, up to 180 days) of just the aggregate fields —
+   no intraday arrays — and computes exact session counts/hours per
+   activity type over the trailing window in Python. This exists because
+   asking an LLM to tally "how many sessions in the last 28 days" from raw
+   JSON is unreliable; the count going into the prompt is always correct.
+4. `src/athlete_profile.py` loads `data/athlete_profile.json` — your
+   self-reported goals, training split, injuries, motivation. Hand-edited,
+   not collected via chat (see limitations below).
+5. `src/gemini_analyze.py` sends the data + history + profile + computed
+   stats to the Gemini API and gets back a coach-style verdict (go hard /
+   train easy / rest, with the evidence) rather than a plain data summary.
+6. `src/telegram_notify.py` posts that report to your Telegram chat.
+7. The GitHub Actions workflow commits the updated history/log files back
+   to the repo after each run so continuity persists.
+
+### What this doesn't do (vs. apps like athletedata.health)
+This bot is **push-only**: GitHub Actions cron runs once a day, does its
+job, and exits — there's no live process listening for replies. So it
+can't do onboarding chat, answer follow-up questions, or send proactive
+mid-day check-ins the way a real Telegram bot with a webhook/long-polling
+listener can. That would need different hosting (a small always-on service
+or a serverless webhook), not just a prompt change. `athlete_profile.json`
+is the workaround: fill it in by hand once instead of chatting it in.
 
 ## Setup
 
@@ -49,7 +66,12 @@ personal project, just don't rely on it for anything critical.
 
 ### 3. Fork/push this repo to your own GitHub account
 
-### 4. Add repo secrets
+### 4. Fill in your athlete profile (optional but recommended)
+Edit `data/athlete_profile.json` with your goals, training split, injuries,
+motivation — whatever context you'd tell a real coach. Commit it. The
+report uses this to tailor advice instead of guessing from data alone.
+
+### 5. Add repo secrets
 Go to **Settings → Secrets and variables → Actions** on your repo and add:
 
 | Secret | Value |
@@ -60,11 +82,11 @@ Go to **Settings → Secrets and variables → Actions** on your repo and add:
 | `TELEGRAM_BOT_TOKEN` | From step 1 |
 | `TELEGRAM_CHAT_ID` | From step 1 |
 
-### 5. Test it
+### 6. Test it
 Go to the **Actions** tab → **Daily Garmin Report** → **Run workflow** to
 trigger it manually before waiting for the schedule.
 
-### 6. Adjust the schedule
+### 7. Adjust the schedule
 Edit the `cron` line in `.github/workflows/daily-report.yml`. It's in UTC —
 use [crontab.guru](https://crontab.guru) to convert your local time.
 
@@ -84,5 +106,8 @@ python main.py
   on what you actually want analyzed.
 - `history.py` caps history at 40 messages (~20 exchanges) to avoid
   unbounded growth; tune `MAX_TURNS` if you want more/less lookback.
+- `daily_log.py` caps the aggregate log at 180 days (`MAX_DAYS`) and the
+  rolling activity stats window at 28 days (`summarize_activities(days=...)`
+  in `main.py`) — tune either if you want a longer/shorter lookback.
 - The system prompt in `gemini_analyze.py` controls tone/format of
   the report — edit it to match what's actually useful to you.

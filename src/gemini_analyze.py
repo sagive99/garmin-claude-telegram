@@ -31,22 +31,41 @@ SYSTEM_PROMPT = (
     "pattern, not a one-off.\n\n"
     "Tight enough for a Telegram message — no long preambles, no restating "
     "the raw data, no hedging disclaimers. Sound like a coach who already "
-    "made the call, not an analyst presenting options."
+    "made the call, not an analyst presenting options.\n\n"
+    "If an athlete profile is given, use it to shape both the advice and "
+    "the tone — e.g. don't push progression pressure if the goal is just "
+    "consistency and motivation is low, but do flag load near a known "
+    "injury area. If rolling activity stats are given, they were computed "
+    "directly from logged data — treat those counts/hours as ground truth "
+    "and never recompute or guess a different number yourself."
 )
 
 
-def analyze_day(daily_data: dict, history: list[dict]) -> tuple[str, list[dict]]:
+def analyze_day(
+    daily_data: dict,
+    history: list[dict],
+    profile: dict | None = None,
+    activity_stats: dict | None = None,
+) -> tuple[str, list[dict]]:
     client = genai.Client()  # reads GEMINI_API_KEY from env
 
-    user_message = {
-        "role": "user",
-        "parts": [{
-            "text": (
-                f"Here is my Garmin data for {daily_data.get('date')}:\n\n"
-                f"```json\n{json.dumps(daily_data, indent=2, default=str)}\n```"
-            )
-        }],
-    }
+    parts = []
+    if profile:
+        parts.append(
+            "Athlete profile (self-reported):\n"
+            f"```json\n{json.dumps(profile, indent=2)}\n```"
+        )
+    if activity_stats:
+        parts.append(
+            "Rolling activity stats (computed, ground truth):\n"
+            f"```json\n{json.dumps(activity_stats, indent=2)}\n```"
+        )
+    parts.append(
+        f"Here is my Garmin data for {daily_data.get('date')}:\n\n"
+        f"```json\n{json.dumps(daily_data, indent=2, default=str)}\n```"
+    )
+
+    user_message = {"role": "user", "parts": [{"text": "\n\n".join(parts)}]}
 
     contents = history + [user_message]
 
