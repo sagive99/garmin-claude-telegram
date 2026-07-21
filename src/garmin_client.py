@@ -1,4 +1,4 @@
-"""Pulls yesterday's activity + health data from Garmin Connect.
+"""Pulls a day's activity + health data from Garmin Connect.
 
 Uses the unofficial `garminconnect` library (reverse-engineered from the
 Garmin Connect mobile API). This is NOT an officially supported integration —
@@ -21,8 +21,11 @@ def fetch_daily_summary(target_date: datetime.date | None = None) -> dict:
     email = os.environ["GARMIN_EMAIL"]
     password = os.environ["GARMIN_PASSWORD"]
 
+    # Default to today: run in the morning, this gives last night's sleep and
+    # this morning's HRV/readiness/body battery. Garmin files a night's sleep
+    # under the date you wake up, so "today" is the freshest recovery picture.
     if target_date is None:
-        target_date = datetime.date.today() - datetime.timedelta(days=1)
+        target_date = datetime.date.today()
     date_str = target_date.isoformat()
 
     client = Garmin(email, password)
