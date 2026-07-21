@@ -84,20 +84,26 @@ def analyze_day(
         f"```json\n{json.dumps(daily_data, indent=2, default=str)}\n```"
     )
 
-    user_message = {"role": "user", "parts": [{"text": "\n\n".join(parts)}]}
-
-    contents = history + [user_message]
+    sent_message = {"role": "user", "parts": [{"text": "\n\n".join(parts)}]}
 
     response = client.models.generate_content(
         model=MODEL,
-        contents=contents,
+        contents=history + [sent_message],
         config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
     )
 
     reply_text = response.text
 
+    # Persist only a marker for the day's data, never the raw payload — a full
+    # day of Garmin intraday arrays is hundreds of KB, and keeping it in the
+    # rolling history balloons every later call past the model's token limits.
+    # The trends live in daily_log (computed) and in the reports themselves.
     # Gemini's chat role is "model", not "assistant".
-    updated_history = contents + [{"role": "model", "parts": [{"text": reply_text}]}]
+    compact_user = {
+        "role": "user",
+        "parts": [{"text": f"[Garmin data for {daily_data.get('date')} — raw payload omitted from history]"}],
+    }
+    updated_history = history + [compact_user, {"role": "model", "parts": [{"text": reply_text}]}]
     return reply_text, updated_history
 
 
