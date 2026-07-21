@@ -63,6 +63,7 @@ def summarize_activities(activities: list[dict], days: int = 28) -> dict:
     cutoff = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
 
     by_type: dict[str, dict] = {}
+    sessions: list[dict] = []
     total_seconds = 0.0
     count = 0
     for activity in activities or []:
@@ -80,7 +81,14 @@ def summarize_activities(activities: list[dict], days: int = 28) -> dict:
         entry = by_type.setdefault(type_key, {"count": 0, "seconds": 0.0})
         entry["count"] += 1
         entry["seconds"] += duration
+        sessions.append({
+            "date": start,
+            "type": type_key,
+            "name": activity.get("activityName"),
+            "minutes": round(duration / 60),
+        })
 
+    sessions.sort(key=lambda s: s["date"])
     return {
         "window_days": days,
         "total_sessions": count,
@@ -89,4 +97,23 @@ def summarize_activities(activities: list[dict], days: int = 28) -> dict:
             k: {"count": v["count"], "hours": round(v["seconds"] / 3600, 1)}
             for k, v in by_type.items()
         },
+        # Per-day session list so chat can answer "what did I do yesterday" from
+        # real data instead of guessing. Tiny (~one line per session).
+        "sessions": sessions,
     }
+
+
+if __name__ == "__main__":
+    _acts = [
+        {"startTimeLocal": "2026-07-20 18:00:00", "duration": 3600,
+         "activityType": {"typeKey": "strength_training"}, "activityName": "Pull A"},
+        {"startTimeLocal": "2026-07-19 17:00:00", "duration": 5400,
+         "activityType": {"typeKey": "tennis_v2"}, "activityName": "Tennis"},
+        {"startTimeLocal": "2026-06-01 10:00:00", "duration": 1800,  # outside 28d
+         "activityType": {"typeKey": "running"}, "activityName": "Run"},
+    ]
+    s = summarize_activities(_acts, days=28)
+    assert s["total_sessions"] == 2, s
+    assert s["by_type"]["strength_training"]["count"] == 1, s
+    assert s["sessions"][-1]["name"] == "Pull A", s  # newest last
+    print("OK", s)
