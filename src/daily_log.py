@@ -12,6 +12,7 @@ import datetime
 import storage
 
 LOG_NAME = "daily_log.json"
+STATS_NAME = "activity_stats.json"
 MAX_DAYS = 180
 
 # Fields worth keeping for trend analysis. Everything else in daily_data
@@ -46,22 +47,29 @@ def save_log(log: list[dict]) -> None:
     storage.write_json(LOG_NAME, log)
 
 
-def summarize_activities(log: list[dict], days: int = 28) -> dict:
-    """Exact session counts/hours over the trailing window — computed here,
-    not left to the model to tally from raw JSON."""
-    cutoff = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+def save_activity_stats(stats: dict) -> None:
+    storage.write_json(STATS_NAME, stats)
 
-    sessions = []
-    for day in log:
-        if day.get("date", "") < cutoff:
-            continue
-        activities = day.get("activities")
-        if isinstance(activities, list):
-            sessions.extend(activities)
+
+def load_activity_stats() -> dict:
+    return storage.read_json(STATS_NAME, {})
+
+
+def summarize_activities(activities: list[dict], days: int = 28) -> dict:
+    """Exact session counts/hours over the trailing window, computed in Python
+    (not left to the model to tally from raw JSON). Takes the flat activity
+    list Garmin returns for a date range, filtered to the window by each
+    activity's start date."""
+    cutoff = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
 
     by_type: dict[str, dict] = {}
     total_seconds = 0.0
-    for activity in sessions:
+    count = 0
+    for activity in activities or []:
+        start = (activity.get("startTimeLocal") or activity.get("startTimeGMT") or "")[:10]
+        if start and start < cutoff:
+            continue
+        count += 1
         duration = activity.get("duration") or 0
         total_seconds += duration
         type_key = (
@@ -75,7 +83,7 @@ def summarize_activities(log: list[dict], days: int = 28) -> dict:
 
     return {
         "window_days": days,
-        "total_sessions": len(sessions),
+        "total_sessions": count,
         "total_hours": round(total_seconds / 3600, 1),
         "by_type": {
             k: {"count": v["count"], "hours": round(v["seconds"] / 3600, 1)}

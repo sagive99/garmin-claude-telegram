@@ -81,6 +81,12 @@ def fetch_daily_summary(target_date: datetime.date | None = None) -> dict:
         lambda: client.get_lactate_threshold(latest=False, start_date=date_str, end_date=date_str),
     )
 
+    # Full trailing-window activity list in one call, so session counts/hours
+    # are accurate from the very first run instead of waiting for the daily
+    # log to fill up day by day.
+    window_start = (target_date - datetime.timedelta(days=27)).isoformat()
+    safe_get("activities_28d", lambda: client.get_activities_by_date(window_start, date_str))
+
     return summary
 
 

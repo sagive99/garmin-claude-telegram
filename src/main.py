@@ -3,7 +3,10 @@ import sys
 from gemini_analyze import analyze_day
 from garmin_client import fetch_daily_summary
 from history import load_history, save_history
-from daily_log import load_log, save_log, append_day, trim_for_log, summarize_activities
+from daily_log import (
+    load_log, save_log, append_day, trim_for_log,
+    summarize_activities, save_activity_stats,
+)
 from athlete_profile import load_profile
 from telegram_notify import send_message
 
@@ -15,9 +18,10 @@ def main() -> None:
     print("Loading conversation history...")
     history = load_history()
 
-    print("Updating rolling activity log...")
+    print("Updating rolling activity log + stats...")
     log = append_day(load_log(), trim_for_log(daily_data))
-    activity_stats = summarize_activities(log, days=28)
+    activity_stats = summarize_activities(daily_data.get("activities_28d") or [], days=28)
+    save_activity_stats(activity_stats)
 
     print("Loading athlete profile...")
     profile = load_profile()
