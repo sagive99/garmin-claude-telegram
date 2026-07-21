@@ -45,6 +45,39 @@ def fetch_daily_summary(target_date: datetime.date | None = None) -> dict:
     safe_get("activities", lambda: client.get_activities_by_date(date_str, date_str))
     safe_get("stress", lambda: client.get_stress_data(date_str))
 
+    # Recovery/load signals — these are what turn a data dump into coaching:
+    # readiness score + why, HRV status, and Garmin's own training load read.
+    safe_get("training_readiness", lambda: client.get_training_readiness(date_str))
+    safe_get("training_status", lambda: client.get_training_status(date_str))
+    safe_get("hrv", lambda: client.get_hrv_data(date_str))
+    safe_get("max_metrics", lambda: client.get_max_metrics(date_str))
+
+    # Everything else Garmin exposes per-day. Some of these need a device
+    # Garmin doesn't sync for everyone (e.g. lactate threshold needs a
+    # running power meter) — safe_get just records the error for those
+    # instead of failing the run, so it's harmless to ask for all of it.
+    safe_get("respiration", lambda: client.get_respiration_data(date_str))
+    safe_get("spo2", lambda: client.get_spo2_data(date_str))
+    safe_get("floors", lambda: client.get_floors(date_str))
+    safe_get("intensity_minutes", lambda: client.get_intensity_minutes_data(date_str))
+    safe_get("resting_hr", lambda: client.get_rhr_day(date_str))
+    safe_get("hydration", lambda: client.get_hydration_data(date_str))
+    safe_get("body_composition", lambda: client.get_body_composition(date_str, date_str))
+    safe_get("daily_weigh_ins", lambda: client.get_daily_weigh_ins(date_str))
+    safe_get("endurance_score", lambda: client.get_endurance_score(date_str, date_str))
+    safe_get("hill_score", lambda: client.get_hill_score(date_str, date_str))
+    safe_get("fitness_age", lambda: client.get_fitnessage_data(date_str))
+    safe_get("all_day_stress", lambda: client.get_all_day_stress(date_str))
+    safe_get("body_battery_events", lambda: client.get_body_battery_events(date_str))
+    safe_get("steps_intraday", lambda: client.get_steps_data(date_str))
+    safe_get("daily_steps", lambda: client.get_daily_steps(date_str, date_str))
+    safe_get("race_predictions", lambda: client.get_race_predictions(startdate=date_str, enddate=date_str))
+    safe_get("running_tolerance", lambda: client.get_running_tolerance(date_str, date_str))
+    safe_get(
+        "lactate_threshold",
+        lambda: client.get_lactate_threshold(latest=False, start_date=date_str, end_date=date_str),
+    )
+
     return summary
 
 

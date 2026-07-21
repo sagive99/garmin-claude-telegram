@@ -12,14 +12,23 @@ personal project, just don't rely on it for anything critical.
 
 ## How it works
 
-1. `src/garmin_client.py` logs into Garmin Connect and pulls stats, sleep,
-   heart rate, body battery, stress, and activities for the previous day.
+1. `src/garmin_client.py` logs into Garmin Connect and pulls essentially
+   everything it exposes for the previous day: stats, sleep, heart rate,
+   body battery (+ events), stress (+ all-day detail), activities, training
+   readiness, training status, HRV, max metrics, respiration, SpO2, floors,
+   intensity minutes, resting HR, hydration, body composition, weigh-ins,
+   endurance/hill score, fitness age, steps (intraday + daily), race
+   predictions, running tolerance, and lactate threshold. Endpoints that
+   need a device you don't have (e.g. lactate threshold) just record an
+   error for that field instead of failing the run.
 2. `src/history.py` keeps a rolling conversation log
    (`data/conversation_history.json`) so Gemini sees prior days' context —
    it behaves like one ongoing dedicated chat rather than a fresh call
    every time.
 3. `src/gemini_analyze.py` sends the data + history to the Gemini API and
-   gets back a short readable report.
+   gets back a coach-style verdict (go hard / train easy / rest, with the
+   evidence) rather than a plain data summary — similar in spirit to what
+   apps like athletedata.health do, just self-hosted and Garmin-only.
 4. `src/telegram_notify.py` posts that report to your Telegram chat.
 5. The GitHub Actions workflow commits the updated history file back to the
    repo after each run so continuity persists.
