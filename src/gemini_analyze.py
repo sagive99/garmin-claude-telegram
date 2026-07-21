@@ -7,7 +7,7 @@ import json
 from google import genai
 from google.genai import types
 
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-3.5-flash"
 
 SYSTEM_PROMPT = (
     "You are a personal training/health analyst reviewing the user's daily "
