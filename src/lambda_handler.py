@@ -14,6 +14,7 @@ import os
 
 import chat
 import main as daily
+from google.genai.errors import APIError
 from telegram_notify import send_message
 
 ALLOWED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -62,10 +63,22 @@ def handler(event, context):
         if text and (not ALLOWED_CHAT_ID or chat_id == str(ALLOWED_CHAT_ID)):
             try:
                 chat.handle_message(text)
+            except APIError as e:
+                print(f"chat failed: {e}")
+                is_quota = e.code == 429 or e.status == "RESOURCE_EXHAUSTED"
+                reply = (
+                    "⚠️ Coach is out of AI quota for now — try again later."
+                    if is_quota
+                    else "⚠️ Coach hit an error and couldn't reply — try again later."
+                )
+                try:
+                    send_message(reply)
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"chat failed: {e}")
                 try:
-                    send_message("⚠️ Coach is out of AI quota for now — try again later.")
+                    send_message("⚠️ Coach hit an error and couldn't reply — try again later.")
                 except Exception:
                     pass
         return _resp(200)
