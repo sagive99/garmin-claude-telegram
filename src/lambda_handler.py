@@ -31,11 +31,29 @@ def handler(event, context):
     if event.get("task") == "daily-report":
         # Never raise: a raised error makes Scheduler retry up to 185x/24h,
         # and each retry burns another Gemini request (20/day free-tier cap).
+        # Instead, tell the user once so a failure isn't silent.
         try:
             daily.main()
             return {"ok": True}
+        except APIError as e:
+            print(f"daily failed: {e}")
+            is_quota = e.code == 429 or e.status == "RESOURCE_EXHAUSTED"
+            reply = (
+                "⚠️ Coach is out of AI quota — today's report couldn't be generated."
+                if is_quota
+                else "⚠️ Coach hit an error generating today's report — check logs."
+            )
+            try:
+                send_message(reply)
+            except Exception:
+                pass
+            return {"ok": False, "error": str(e)}
         except Exception as e:
             print(f"daily failed: {e}")
+            try:
+                send_message("⚠️ Coach hit an error generating today's report — check logs.")
+            except Exception:
+                pass
             return {"ok": False, "error": str(e)}
 
     # Otherwise it's a Function URL HTTP event.

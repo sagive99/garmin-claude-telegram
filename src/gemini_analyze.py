@@ -3,11 +3,30 @@ conversation history so it reads as one continuous dedicated thread rather
 than a one-off, context-free call each day.
 """
 import json
+import time
 
 from google import genai
 from google.genai import types
+from google.genai.errors import ServerError
 
-MODEL = "gemini-3.5-flash"
+MODEL = "gemini-3.6-flash"
+
+# Only retries on 5xx (transient overload) — a 429/quota error is a
+# ClientError, not a ServerError, so it's never retried here: retrying
+# a real quota error just burns more of the daily cap for nothing.
+MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 2
+
+
+def _generate_with_retry(client, **kwargs):
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            return client.models.generate_content(**kwargs)
+        except ServerError:
+            if attempt == MAX_ATTEMPTS - 1:
+                raise
+            time.sleep(RETRY_BACKOFF_SECONDS * (2 ** attempt))
+
 
 SYSTEM_PROMPT = (
     "You are the user's personal AI coach reviewing yesterday's Garmin data "
@@ -86,7 +105,8 @@ def analyze_day(
 
     sent_message = {"role": "user", "parts": [{"text": "\n\n".join(parts)}]}
 
-    response = client.models.generate_content(
+    response = _generate_with_retry(
+        client,
         model=MODEL,
         contents=history + [sent_message],
         config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
@@ -123,7 +143,8 @@ def chat_reply(
     sent_parts = _context_parts(profile, activity_stats) + [user_text]
     sent_message = {"role": "user", "parts": [{"text": "\n\n".join(sent_parts)}]}
 
-    response = client.models.generate_content(
+    response = _generate_with_retry(
+        client,
         model=MODEL,
         contents=history + [sent_message],
         config=types.GenerateContentConfig(system_instruction=CHAT_SYSTEM_PROMPT),
