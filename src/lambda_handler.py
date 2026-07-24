@@ -14,15 +14,33 @@ import os
 
 import chat
 import main as daily
+import storage
 from telegram_notify import send_message
 
 ALLOWED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
 SCHEDULER_TOKEN = os.environ.get("SCHEDULER_TOKEN")
 
+SEEN_NAME = "processed_updates.json"
+
 
 def _resp(status: int):
     return {"statusCode": status, "body": ""}
+
+
+def _already_processed(update_id) -> bool:
+    """Telegram retries a webhook (same update_id) when our response is slow —
+    /report runs the multi-second Garmin pull inline, which blows Telegram's
+    timeout and triggers a retry, i.e. a second pull + Gemini call. Record the
+    id before the slow work; the retry only fires after Telegram's timeout, so
+    the marker is already stored and the second invocation short-circuits."""
+    if update_id is None:
+        return False
+    seen = storage.read_json(SEEN_NAME, [])
+    if update_id in seen:
+        return True
+    storage.write_json(SEEN_NAME, (seen + [update_id])[-50:])
+    return False
 
 
 def handler(event, context):
@@ -60,6 +78,9 @@ def handler(event, context):
             return _resp(403)
 
         update = json.loads(body or "{}")
+        if _already_processed(update.get("update_id")):
+            return _resp(200)
+
         message = update.get("message") or update.get("edited_message") or {}
         text = message.get("text")
         chat_id = str((message.get("chat") or {}).get("id", ""))
