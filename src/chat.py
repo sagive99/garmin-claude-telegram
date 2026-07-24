@@ -4,9 +4,7 @@ report uses — so chat and daily reports read as one continuous thread.
 
 ponytail: answers from stored data only (profile + precomputed stats +
 history), no live Garmin pull per message. The activity stats are refreshed
-by the daily job; chat just reads the last computed snapshot. Add on-demand
-fetch later if you want "pull my data right now" — it needs a cached garth
-token to avoid re-login cost/MFA.
+by the daily job; on-demand pull is the /report command in lambda_handler.
 """
 from athlete_profile import load_profile
 from daily_log import load_activity_stats

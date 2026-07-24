@@ -11,16 +11,32 @@ import os
 
 from garminconnect import Garmin
 
+import storage
+
+TOKEN_NAME = "garmin_tokens.json"
+
+
+def _login() -> Garmin:
+    """Reuse the saved garth OAuth token when there is one — Garmin throttles
+    fresh email/password logins (back-to-back runs get 429'd), while token
+    reuse skips the login endpoint entirely. Falls back to a full login with
+    GARMIN_EMAIL / GARMIN_PASSWORD when the token is missing or rejected."""
+    token = storage.read_json(TOKEN_NAME, None)
+    if token:
+        try:
+            client = Garmin()
+            client.login(token)
+            return client
+        except Exception as e:
+            print(f"saved Garmin token rejected, doing full login: {e}")
+    client = Garmin(os.environ["GARMIN_EMAIL"], os.environ["GARMIN_PASSWORD"])
+    client.login()
+    storage.write_json(TOKEN_NAME, client.garth.dumps())
+    return client
+
 
 def fetch_daily_summary(target_date: datetime.date | None = None) -> dict:
-    """Log in to Garmin Connect and pull a summary of one day's data.
-
-    Credentials come from env vars GARMIN_EMAIL / GARMIN_PASSWORD (set as
-    GitHub Actions secrets — never hardcode them).
-    """
-    email = os.environ["GARMIN_EMAIL"]
-    password = os.environ["GARMIN_PASSWORD"]
-
+    """Log in to Garmin Connect and pull a summary of one day's data."""
     # Default to today: run in the morning, this gives last night's sleep and
     # this morning's HRV/readiness/body battery. Garmin files a night's sleep
     # under the date you wake up, so "today" is the freshest recovery picture.
@@ -28,8 +44,7 @@ def fetch_daily_summary(target_date: datetime.date | None = None) -> dict:
         target_date = datetime.date.today()
     date_str = target_date.isoformat()
 
-    client = Garmin(email, password)
-    client.login()
+    client = _login()
 
     summary: dict = {"date": date_str}
 

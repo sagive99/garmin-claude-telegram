@@ -11,11 +11,19 @@ dispatch is lighter than dragging Flask + an adapter into the zip.
 import base64
 import json
 import os
+import time
 
 import chat
 import main as daily
 import storage
 from telegram_notify import send_message
+
+# Lambda's clock is UTC but the user's day is Israel time — affects the Garmin
+# fetch date, the 28-day stats cutoff, and the date told to Gemini. tzset()
+# doesn't exist on Windows; local dev already runs in the right timezone.
+os.environ.setdefault("TZ", "Asia/Jerusalem")
+if hasattr(time, "tzset"):
+    time.tzset()
 
 ALLOWED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
@@ -57,8 +65,7 @@ def handler(event, context):
             # the Telegram API (free), so it doesn't touch the Gemini quota.
             try:
                 send_message(
-                    "⚠️ Couldn't pull your Garmin data this morning — check your "
-                    "watch sync. Send /report to retry."
+                    "⚠️ This morning's Garmin pull failed — send /report to retry."
                 )
             except Exception:
                 pass
@@ -74,7 +81,10 @@ def handler(event, context):
         body = base64.b64decode(body).decode("utf-8")
 
     if path.endswith("/telegram-webhook"):
-        if WEBHOOK_SECRET and headers.get("x-telegram-bot-api-secret-token") != WEBHOOK_SECRET:
+        # Fail closed: a missing WEBHOOK_SECRET env var must mean "reject all",
+        # not "accept all" — otherwise one config slip opens the bot to anyone
+        # who finds the Function URL.
+        if not WEBHOOK_SECRET or headers.get("x-telegram-bot-api-secret-token") != WEBHOOK_SECRET:
             return _resp(403)
 
         update = json.loads(body or "{}")
@@ -102,22 +112,31 @@ def handler(event, context):
                 except Exception as e:
                     print(f"report failed: {e}")
                     try:
-                        send_message("⚠️ Couldn't pull your Garmin data — check your watch sync and try again.")
+                        send_message("⚠️ Garmin pull failed — wait a minute or two, then send /report again.")
                     except Exception:
                         pass
+            elif cmd in ("/help", "/start"):
+                try:
+                    send_message(
+                        "Commands:\n"
+                        "/report — pull today's Garmin data and post a fresh report\n"
+                        "Anything else you type goes straight to the coach."
+                    )
+                except Exception as e:
+                    print(f"help failed: {e}")
             else:
                 try:
                     chat.handle_message(text)
                 except Exception as e:
                     print(f"chat failed: {e}")
                     try:
-                        send_message("⚠️ Coach is out of AI quota for now — try again later.")
+                        send_message("⚠️ Coach hit an error answering that — try again in a minute.")
                     except Exception:
                         pass
         return _resp(200)
 
     if path.endswith("/daily-report"):
-        if SCHEDULER_TOKEN and headers.get("x-scheduler-token") != SCHEDULER_TOKEN:
+        if not SCHEDULER_TOKEN or headers.get("x-scheduler-token") != SCHEDULER_TOKEN:
             return _resp(403)
         daily.main()
         return _resp(200)

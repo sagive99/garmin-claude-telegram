@@ -2,6 +2,7 @@
 conversation history so it reads as one continuous dedicated thread rather
 than a one-off, context-free call each day.
 """
+import datetime
 import json
 
 from google import genai
@@ -9,8 +10,14 @@ from google.genai import types
 
 MODEL = "gemini-3.5-flash"
 
+PLAIN_TEXT_RULE = (
+    "\n\nReplies go out as plain Telegram text — markdown is NOT rendered. "
+    "Never use **, ##, backticks, or [links]; the symbols would appear "
+    "literally. Structure with short lines, dashes, and emoji instead."
+)
+
 SYSTEM_PROMPT = (
-    "You are the user's personal AI coach reviewing yesterday's Garmin data "
+    "You are the user's personal AI coach reviewing today's Garmin data "
     "(recovery, sleep, HRV, training readiness/status, body battery, stress, "
     "activities). You have the running history of previous days in this "
     "conversation — use it, don't just describe one day in isolation. Be "
@@ -22,7 +29,7 @@ SYSTEM_PROMPT = (
     "2. The specific evidence for that call (e.g. 'HRV down 15% vs your "
     "7-day average, resting HR up 4bpm, sleep score 61 vs usual 78 — body's "
     "still recovering'). Cite actual numbers and compare to the trend in "
-    "history, not just yesterday alone.\n"
+    "history, not just today alone.\n"
     "3. 2-4 more bullets on anything else notable (training load/status, "
     "stress, VO2max/fitness trend, activity performance) — skip categories "
     "with nothing new to say.\n"
@@ -38,7 +45,7 @@ SYSTEM_PROMPT = (
     "injury area. If rolling activity stats are given, they were computed "
     "directly from logged data — treat those counts/hours as ground truth "
     "and never recompute or guess a different number yourself."
-)
+) + PLAIN_TEXT_RULE
 
 CHAT_SYSTEM_PROMPT = (
     "You are the user's personal AI coach, replying to a message they sent "
@@ -52,11 +59,13 @@ CHAT_SYSTEM_PROMPT = (
     "advice by their goals and injuries. If you genuinely don't have the data "
     "to answer (e.g. they ask about a metric not in the log), say so plainly. "
     "Keep it tight for Telegram — no long preambles or disclaimers."
-)
+) + PLAIN_TEXT_RULE
 
 
 def _context_parts(profile: dict | None, activity_stats: dict | None) -> list[str]:
-    parts = []
+    # The model has no clock — without this it infers "today" from history
+    # markers and drifts (it once claimed tomorrow's date as today).
+    parts = [f"(Today's date is {datetime.date.today().isoformat()}.)"]
     if profile:
         parts.append(
             "Athlete profile (self-reported):\n"
@@ -93,6 +102,10 @@ def analyze_day(
     )
 
     reply_text = response.text
+    if not reply_text:
+        # Blocked / empty-candidate responses come back with text=None; raise
+        # so the caller reports failure instead of sending None to Telegram.
+        raise RuntimeError("empty Gemini response")
 
     # Persist only a marker for the day's data, never the raw payload — a full
     # day of Garmin intraday arrays is hundreds of KB, and keeping it in the
@@ -130,6 +143,8 @@ def chat_reply(
     )
 
     reply_text = response.text
+    if not reply_text:
+        raise RuntimeError("empty Gemini response")
     updated_history = history + [
         {"role": "user", "parts": [{"text": user_text}]},
         {"role": "model", "parts": [{"text": reply_text}]},
