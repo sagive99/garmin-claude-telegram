@@ -35,6 +35,15 @@ def handler(event, context):
             return {"ok": True}
         except Exception as e:
             print(f"daily failed: {e}")
+            # Tell the user once instead of failing silently — send_message is
+            # the Telegram API (free), so it doesn't touch the Gemini quota.
+            try:
+                send_message(
+                    "⚠️ Couldn't pull your Garmin data this morning — check your "
+                    "watch sync. Send /report to retry."
+                )
+            except Exception:
+                pass
             return {"ok": False, "error": str(e)}
 
     # Otherwise it's a Function URL HTTP event.
@@ -60,14 +69,30 @@ def handler(event, context):
         # free-tier cap. On failure, tell the user once with a plain message
         # (send_message uses the Telegram API, not Gemini, so it's free).
         if text and (not ALLOWED_CHAT_ID or chat_id == str(ALLOWED_CHAT_ID)):
-            try:
-                chat.handle_message(text)
-            except Exception as e:
-                print(f"chat failed: {e}")
+            # /report@BotName -> /report ; whitespace-only text -> ""
+            cmd = (text.strip().split() or [""])[0].split("@")[0].lower()
+            if cmd in ("/report", "/update"):
+                # On-demand daily report: pull today's Garmin data and analyze
+                # it now, so chat isn't stuck saying "I don't have today's data".
+                # Ack first — the Garmin pull takes several seconds.
                 try:
-                    send_message("⚠️ Coach is out of AI quota for now — try again later.")
-                except Exception:
-                    pass
+                    send_message("📊 Pulling your latest Garmin data...")
+                    daily.main()
+                except Exception as e:
+                    print(f"report failed: {e}")
+                    try:
+                        send_message("⚠️ Couldn't pull your Garmin data — check your watch sync and try again.")
+                    except Exception:
+                        pass
+            else:
+                try:
+                    chat.handle_message(text)
+                except Exception as e:
+                    print(f"chat failed: {e}")
+                    try:
+                        send_message("⚠️ Coach is out of AI quota for now — try again later.")
+                    except Exception:
+                        pass
         return _resp(200)
 
     if path.endswith("/daily-report"):
