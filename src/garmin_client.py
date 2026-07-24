@@ -11,32 +11,20 @@ import os
 
 from garminconnect import Garmin
 
-import storage
-
-TOKEN_NAME = "garmin_tokens.json"
-
-
-def _login() -> Garmin:
-    """Reuse the saved garth OAuth token when there is one — Garmin throttles
-    fresh email/password logins (back-to-back runs get 429'd), while token
-    reuse skips the login endpoint entirely. Falls back to a full login with
-    GARMIN_EMAIL / GARMIN_PASSWORD when the token is missing or rejected."""
-    token = storage.read_json(TOKEN_NAME, None)
-    if token:
-        try:
-            client = Garmin()
-            client.login(token)
-            return client
-        except Exception as e:
-            print(f"saved Garmin token rejected, doing full login: {e}")
-    client = Garmin(os.environ["GARMIN_EMAIL"], os.environ["GARMIN_PASSWORD"])
-    client.login()
-    storage.write_json(TOKEN_NAME, client.garth.dumps())
-    return client
+# ponytail: no token cache — dedup means ~1 login/day, under Garmin's 429
+# threshold, so a plain login is enough. Re-add garth token reuse (garminconnect
+# exposes it through client.garth — verify the exact dump/load call against the
+# pinned version first) only if login-rate 429s come back under normal use.
 
 
 def fetch_daily_summary(target_date: datetime.date | None = None) -> dict:
-    """Log in to Garmin Connect and pull a summary of one day's data."""
+    """Log in to Garmin Connect and pull a summary of one day's data.
+
+    Credentials come from env vars GARMIN_EMAIL / GARMIN_PASSWORD.
+    """
+    email = os.environ["GARMIN_EMAIL"]
+    password = os.environ["GARMIN_PASSWORD"]
+
     # Default to today: run in the morning, this gives last night's sleep and
     # this morning's HRV/readiness/body battery. Garmin files a night's sleep
     # under the date you wake up, so "today" is the freshest recovery picture.
@@ -44,7 +32,8 @@ def fetch_daily_summary(target_date: datetime.date | None = None) -> dict:
         target_date = datetime.date.today()
     date_str = target_date.isoformat()
 
-    client = _login()
+    client = Garmin(email, password)
+    client.login()
 
     summary: dict = {"date": date_str}
 
